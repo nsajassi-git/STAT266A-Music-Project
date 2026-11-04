@@ -1,0 +1,186 @@
+---
+title: "Has Popular Music Gotten Faster?"
+subtitle: "STAT 266A  Mid-Quarter Report"
+author: "Nickan Sajassi"
+date: "2026-11-03"
+format:
+  html:
+    toc: true
+    embed-resources: true
+execute:
+  echo: true
+  warning: false
+  message: false
+---
+
+## Research question
+
+How has the tempo (beats per minute, or BPM) of Billboard Hot 100 number-one hits changed from 1958 to 2025? How do tempos compare across major genres?
+
+I chose this question because I produce music and wanted to see whether the tempo of chart-topping songs has changed over time. This report focuses on an initial analysis and I may explore energy and danceability later.
+
+## Dataset
+
+The data come from the [August 26, 2025 TidyTuesday release](https://github.com/rfordatascience/tidytuesday/blob/main/data/2025/2025-08-26/readme.md), based on Chris Dalla Riva's Billboard Hot 100 Number Ones collection. The rows represent songs that reached number one, with variables describing music and chart characteristics.
+
+```{r}
+#| label: load-data
+library(readr)
+library(ggplot2)
+
+billboard <- read_csv(
+  "https://raw.githubusercontent.com/rfordatascience/tidytuesday/main/data/2025/2025-08-26/billboard.csv",
+  show_col_types = FALSE
+)
+
+dim(billboard)
+head(billboard[, c("song", "artist", "date", "bpm", "cdr_genre")], 6)
+```
+
+For this first report, I focus on the variables of `date`, `bpm`, and `cdr_genre`. The collection also contains other musical characteristics such as `energy` and `danceability`.
+
+**Data source and usage:** TidyTuesday published this dataset on August 26, 2025. I will check the source's reuse terms before publishing the underlying CSV in my own repository. The report itself reads directly from the public TidyTuesday file.
+
+## Data checks and cleaning
+
+Before plotting, I checked how many records were available and how much information was missing from the main variables.
+
+```{r}
+#| label: data-checks
+nrow(billboard)
+ncol(billboard)
+
+sum(is.na(billboard$bpm))
+sum(is.na(billboard$cdr_genre))
+
+#Date column was imported as a date-time.
+billboard$year <- as.integer(format(billboard$date, "%Y"))
+
+#Removing rows with missing BPM or year for the main analysis.
+songs <- billboard[!is.na(billboard$bpm) & !is.na(billboard$year), ]
+
+nrow(songs)
+range(songs$year)
+summary(songs$bpm)
+```
+
+The original dataset contains 1,177 rows and 105 columns. In the initial inspection, 2 BPM values and 88 genre labels were missing. The main tempo analysis removes rows missing BPM or year. I keep the original genre labels at this stage because some songs have more than one genre listed (for example, `Pop;Rock`).
+
+After removing the two rows with missing BPM values, I had **1,175 songs** for the main analysis. The years still run from **1958 to 2025**. BPM ranges from **16 to 206**, which is a pretty wide range. I want to look more closely at the unusually low BPM values before drawing stronger conclusions.
+
+## Figure 1: Tempo over time
+
+A scatterplot is useful because year and BPM are both numeric. The fitted straight line is a simple way to see the overall direction of the relationship, without assuming this line captures every change over the decades.
+
+```{r}
+#| label: fig-bpm-over-time
+#| fig-cap: "BPM of Billboard Hot 100 number-one hits by year; line shows a fitted linear trend. Source: TidyTuesday / Chris Dalla Riva."
+#| fig-width: 8
+#| fig-height: 4.5
+ggplot(songs, aes(x = year, y = bpm)) +
+  geom_point(alpha = 0.45, size = 1.6) +
+  geom_smooth(method = "lm", se = TRUE) +
+  labs(
+    title = "Tempo of Billboard #1 hits over time",
+    x = "Year",
+    y = "Tempo (BPM)"
+  ) +
+  theme_minimal()
+```
+
+**What Figure 1 shows:** The fitted line slopes slightly upward, suggesting a small increase in BPM over time. However, the points are spread widely above and below the line in almost every decade. This makes me think year by itself probably does not explain very much of the variation in tempo.
+
+## Figure 2: Tempo by genre
+
+For an initial genre comparison, I chose five common **single-label** genre categories. A boxplot makes it easy to compare their typical tempos and how widely the BPM varies within each genre.
+
+```{r}
+#| label: genre-checks
+main_genres <- c("Pop", "Rock", "Funk/Soul", "Electronic/Dance", "Hip Hop")
+
+genre_songs <- songs[songs$cdr_genre %in% main_genres, ]
+
+table(genre_songs$cdr_genre)
+nrow(genre_songs)
+```
+
+```{r}
+#| label: fig-bpm-by-genre
+#| fig-cap: "BPM distributions for five common, single-label genre categories. Songs with multiple genre labels or missing genre are omitted from this comparison."
+#| fig-width: 8
+#| fig-height: 4.5
+ggplot(genre_songs, aes(x = cdr_genre, y = bpm)) +
+  geom_boxplot() +
+  labs(
+    title = "Tempo distributions across major genres",
+    x = "Genre",
+    y = "Tempo (BPM)"
+  ) +
+  theme_minimal()
+```
+
+**What Figure 2 shows:** Electronic/Dance and Rock have some of the higher median BPM values, while Hip Hop has the lowest median of these five categories. There is still a lot of overlap between the boxes, and Hip Hop appears to have a relatively wide spread. I chose boxplots because they let me compare typical BPM and the variation within each genre without plotting every individual song.
+
+This comparison only includes songs assigned exactly one of these five labels. A song labeled `Pop;Rock` is left out of this figure, but remains in the overall analysis. This is a simplification I may revisit later.
+
+## First regression model
+
+I fit a basic linear regression with BPM as the outcome and time as the predictor. I subtract 1958 from the year so that the intercept represents the predicted tempo at the start of the dataset, rather than the unrealistic year zero.
+
+```{r}
+#| label: regression
+songs$years_since_1958 <- songs$year - 1958
+
+tempo_model <- lm(bpm ~ years_since_1958, data = songs)
+
+summary(tempo_model)
+```
+
+**Model interpretation:**
+
+- The coefficient for `years_since_1958` is about **0.078 BPM per year**. The model estimates a small increase in tempo as the years go by. Over 67 years, that works out to roughly **5.2 BPM**.
+- The intercept is about **113.57 BPM**. This is the predicted BPM for a song in 1958 according to this simple model.
+- The **R-squared is 0.0035**, meaning year explains only about **0.35%** of the differences in BPM between songs. So even though the slope is positive, year is not a useful predictor of an individual song's BPM on its own.
+- The p-value for the year coefficient is about **0.044**, which is below 0.05. This is suggestive of a positive association under the model assumptions, but the effect is small and those assumptions still need attention.
+
+These are **associations**, not proof that passing time caused tempo to change. Genre and other factors could influence the pattern.
+
+### Checking regression assumptions
+
+I checked how many rows the model used and plotted residuals against predicted BPM, following the approach from Week 5. Im looking for a roughly shapeless cloud centered around zero. A curved pattern could mean a straight line model is missing something while a funnel shape could suggest changing variability.
+
+```{r}
+#| label: regression-diagnostics
+#| fig-cap: "Residuals versus fitted BPM for the first linear regression model."
+#| fig-width: 7
+#| fig-height: 4
+nobs(tempo_model)
+
+songs$resid <- residuals(tempo_model)
+
+ggplot(songs, aes(x = fitted(tempo_model), y = resid)) +
+  geom_point() +
+  geom_hline(yintercept = 0) +
+  labs(
+    title = "Residuals from the BPM regression",
+    x = "Predicted BPM",
+    y = "Residuals"
+  ) +
+  theme_minimal()
+```
+
+**What I noticed:** Most residuals are scattered around zero, but some songs have large positive or negative residuals. The plot doesn't show a very strong curve, though the spread and patterns are not perfectly uniform. This is a useful first check of the linearity and spread, but it does not establish all of the regression assumptions. I want to examine the unusual songs more closely before making stronger conclusions.
+
+**Additional limitation:** Songs from the same periods, genres, or artists might not be independent. A straight line regression is a useful starting model, but it may miss non-linear changes across decades. I plan to compare models with genre in later work.
+
+## Next steps
+
+For the final project, I might look further into comparing trends within genres and explore whether BPM is related to energy or danceability. I'll also review the multi-label genre categories and unusual BPM values more closely.
+
+## Contribution statement
+
+I've been working on this project solo. I chose the music research question, ran the code in Positron, and checked the dataset and rendered results.
+
+## AI use
+
+I used ChatGPT to help understand and organize the quatro format and understand some of the R output. I wrote and ran the analysis in Positron and reviewed the plots and regression output myself.
